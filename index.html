@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChainJudge - Coding Contest</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0e0e1a;
+      color: white;
+      padding: 20px;
+      max-width: 1100px;
+      margin: auto;
+    }
+    h2, h3 {
+      margin-top: 0;
+    }
+    input, button, select {
+      margin: 5px;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      font-size: 14px;
+    }
+    input, select {
+      min-width: 220px;
+    }
+    button {
+      background: #7c6af0;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #6a58e6;
+    }
+    .box {
+      background: #1c1c2e;
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 10px;
+    }
+    .status {
+      background: #171726;
+      border-left: 4px solid #7c6af0;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ok { border-left-color: #2ecc71; }
+    .err { border-left-color: #ff5c7a; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .mono {
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .label {
+      font-weight: bold;
+      display: inline-block;
+      min-width: 120px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #33354d;
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #2a2c44;
+    }
+    .small {
+      font-size: 12px;
+      color: #c8c8d8;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>⚡ ChainJudge Dashboard</h2>
+
+<div id="statusBox" class="status">Ready.</div>
+
+<div class="box">
+  <h3>Wallet</h3>
+  <div class="row">
+    <button onclick="connectWallet()">Connect / Reconnect MetaMask</button>
+    <button onclick="refreshAll()">Refresh All</button>
+  </div>
+  <p><span class="label">Wallet:</span> <span id="wallet" class="mono">Not connected</span></p>
+  <p><span class="label">Organizer:</span> <span id="organizer" class="mono">-</span></p>
+  <p><span class="label">Role:</span> <span id="role">-</span></p>
+  <p><span class="label">Finalized:</span> <span id="finalized">-</span></p>
+</div>
+
+<div class="box">
+  <h3>Connect Contract</h3>
+  <input id="contractAddress" placeholder="Contract address" />
+  <button onclick="connectContract()">Connect</button>
+</div>
+
+<div class="box">
+  <h3>Register Participant</h3>
+  <input id="pAddr" placeholder="Participant address" />
+  <input id="pName" placeholder="Participant name" />
+  <button onclick="registerParticipant()">Register</button>
+</div>
+
+<div class="box">
+  <h3>Register Judge</h3>
+  <input id="jAddr" placeholder="Judge address" />
+  <input id="jName" placeholder="Judge name" />
+  <button onclick="registerJudge()">Register</button>
+</div>
+
+<div class="box">
+  <h3>Assign Judge</h3>
+  <input id="aj" placeholder="Judge address" />
+  <input id="ap" placeholder="Participant address" />
+  <button onclick="assignJudge()">Assign</button>
+</div>
+
+<div class="box">
+  <h3>Submit Score</h3>
+  <input id="sp" placeholder="Participant address" />
+  <input id="ps" type="number" min="0" max="100" placeholder="Problem Solving" />
+  <input id="cq" type="number" min="0" max="100" placeholder="Code Quality" />
+  <input id="eff" type="number" min="0" max="100" placeholder="Efficiency" />
+  <button onclick="submitScore()">Submit</button>
+</div>
+
+<div class="box">
+  <h3>Finalize Contest</h3>
+  <button onclick="finalizeContest()">Finalize Contest</button>
+</div>
+
+<div class="box">
+  <h3>Participants</h3>
+  <div id="participantsTable">No data loaded.</div>
+</div>
+
+<div class="box">
+  <h3>Judges</h3>
+  <div id="judgesTable">No data loaded.</div>
+</div>
+
+<div class="box">
+  <h3>Leaderboard</h3>
+  <button onclick="loadLeaderboard()">Load Leaderboard</button>
+  <div id="leaderboardTable">No leaderboard loaded.</div>
+</div>
+
+<div class="box">
+  <h3>Score Breakdown Lookup</h3>
+  <input id="lookupJudge" placeholder="Judge address" />
+  <input id="lookupParticipant" placeholder="Participant address" />
+  <button onclick="lookupScore()">Lookup Score</button>
+  <div id="scoreLookupResult" class="small">No score lookup yet.</div>
+</div>
+
+<script>
+let provider = null;
+let signer = null;
+let contract = null;
+let currentWallet = "";
+let currentOrganizer = "";
+
+const ABI = [
+  "function organizer() view returns (address)",
+  "function finalized() view returns (bool)",
+  "function registerParticipant(address,string)",
+  "function registerJudge(address,string)",
+  "function assignJudgeToParticipant(address,address)",
+  "function submitScore(address,uint256,uint256,uint256)",
+  "function finalizeContest()",
+  "function getParticipantList() view returns (address[])",
+  "function getJudgeList() view returns (address[])",
+  "function getAssignedParticipants(address) view returns (address[])",
+  "function getParticipantScore(address) view returns (uint256 totalWeighted, uint256 judgesCount)",
+  "function getScore(address,address) view returns (uint256,uint256,uint256,bool)",
+  "function getJudgeProgress(address) view returns (uint256 submitted, uint256 total)",
+  "function participants(address) view returns (address addr, string name, bool registered)",
+  "function judges(address) view returns (address addr, string name, bool registered, uint256 submittedCount)"
+];
+
+function setStatus(message, type = "info") {
+  const box = document.getElementById("statusBox");
+  box.textContent = message;
+  box.className = "status";
+  if (type === "ok") box.classList.add("ok");
+  if (type === "err") box.classList.add("err");
+}
+
+function getErrorMessage(e) {
+  if (e?.reason) return e.reason;
+  if (e?.data?.message) return e.data.message;
+  if (e?.error?.message) return e.error.message;
+  if (e?.message) return e.message;
+  return "Transaction failed";
+}
+
+function requireMetaMask() {
+  if (!window.ethereum) {
+    throw new Error("MetaMask not found.");
+  }
+}
+
+function cleanAddress(value) {
+  return value.trim();
+}
+
+function requireValidAddress(value, label) {
+  const addr = cleanAddress(value);
+  if (!addr) throw new Error(label + " is required.");
+  if (!ethers.utils.isAddress(addr)) throw new Error(label + " is not a valid Ethereum address.");
+  return addr;
+}
+
+function requireNonEmpty(value, label) {
+  const v = value.trim();
+  if (!v) throw new Error(label + " is required.");
+  return v;
+}
+
+function requireConnectedWallet() {
+  if (!signer) throw new Error("Connect MetaMask first.");
+}
+
+function requireConnectedContract() {
+  if (!contract) throw new Error("Connect the contract first.");
+}
+
+function getRole() {
+  if (!currentWallet || !currentOrganizer) return "-";
+  return currentWallet.toLowerCase() === currentOrganizer.toLowerCase()
+    ? "Organizer"
+    : "Judge / Participant / Other";
+}
+
+function requireScore(value, label) {
+  const num = Number(value);
+  if (Number.isNaN(num)) throw new Error(label + " must be a number.");
+  if (num < 0 || num > 100) throw new Error(label + " must be between 0 and 100.");
+  return num;
+}
+
+async function connectWallet() {
+  try {
+    requireMetaMask();
+    provider = new ethers.providers.Web3Provider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = provider.getSigner();
+    currentWallet = await signer.getAddress();
+    document.getElementById("wallet").textContent = currentWallet;
+
+    if (contract) {
+      const addr = document.getElementById("contractAddress").value.trim();
+      if (ethers.utils.isAddress(addr)) {
+        contract = new ethers.Contract(addr, ABI, signer);
+      }
+    }
+
+    document.getElementById("role").textContent = getRole();
+    setStatus("Wallet connected: " + currentWallet, "ok");
+    await refreshContractMeta();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function connectContract() {
+  try {
+    requireConnectedWallet();
+    const addr = requireValidAddress(document.getElementById("contractAddress").value, "Contract address");
+    contract = new ethers.Contract(addr, ABI, signer);
+
+    currentOrganizer = await contract.organizer();
+    document.getElementById("organizer").textContent = currentOrganizer;
+    document.getElementById("role").textContent = getRole();
+
+    const isFinalized = await contract.finalized();
+    document.getElementById("finalized").textContent = isFinalized ? "Yes" : "No";
+
+    setStatus("Contract connected successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function refreshContractMeta() {
+  try {
+    if (!contract) return;
+    currentOrganizer = await contract.organizer();
+    document.getElementById("organizer").textContent = currentOrganizer;
+    document.getElementById("role").textContent = getRole();
+
+    const isFinalized = await contract.finalized();
+    document.getElementById("finalized").textContent = isFinalized ? "Yes" : "No";
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function registerParticipant() {
+  try {
+    requireConnectedWallet();
+    requireConnectedContract();
+
+    const addr = requireValidAddress(document.getElementById("pAddr").value, "Participant address");
+    const name = requireNonEmpty(document.getElementById("pName").value, "Participant name");
+
+    const tx = await contract.registerParticipant(addr, name);
+    setStatus("registerParticipant tx: " + tx.hash, "info");
+    await tx.wait();
+
+    document.getElementById("pAddr").value = "";
+    document.getElementById("pName").value = "";
+
+    setStatus("Participant registered successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function registerJudge() {
+  try {
+    requireConnectedWallet();
+    requireConnectedContract();
+
+    const addr = requireValidAddress(document.getElementById("jAddr").value, "Judge address");
+    const name = requireNonEmpty(document.getElementById("jName").value, "Judge name");
+
+    const tx = await contract.registerJudge(addr, name);
+    setStatus("registerJudge tx: " + tx.hash, "info");
+    await tx.wait();
+
+    document.getElementById("jAddr").value = "";
+    document.getElementById("jName").value = "";
+
+    setStatus("Judge registered successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function assignJudge() {
+  try {
+    requireConnectedWallet();
+    requireConnectedContract();
+
+    const judgeAddr = requireValidAddress(document.getElementById("aj").value, "Judge address");
+    const participantAddr = requireValidAddress(document.getElementById("ap").value, "Participant address");
+
+    const tx = await contract.assignJudgeToParticipant(judgeAddr, participantAddr);
+    setStatus("assignJudgeToParticipant tx: " + tx.hash, "info");
+    await tx.wait();
+
+    document.getElementById("aj").value = "";
+    document.getElementById("ap").value = "";
+
+    setStatus("Judge assigned successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function submitScore() {
+  try {
+    requireConnectedWallet();
+    requireConnectedContract();
+
+    const participantAddr = requireValidAddress(document.getElementById("sp").value, "Participant address");
+    const ps = requireScore(document.getElementById("ps").value, "Problem Solving");
+    const cq = requireScore(document.getElementById("cq").value, "Code Quality");
+    const eff = requireScore(document.getElementById("eff").value, "Efficiency");
+
+    const tx = await contract.submitScore(participantAddr, ps, cq, eff);
+    setStatus("submitScore tx: " + tx.hash, "info");
+    await tx.wait();
+
+    document.getElementById("sp").value = "";
+    document.getElementById("ps").value = "";
+    document.getElementById("cq").value = "";
+    document.getElementById("eff").value = "";
+
+    setStatus("Score submitted successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function finalizeContest() {
+  try {
+    requireConnectedWallet();
+    requireConnectedContract();
+
+    const tx = await contract.finalizeContest();
+    setStatus("finalizeContest tx: " + tx.hash, "info");
+    await tx.wait();
+
+    setStatus("Contest finalized successfully.", "ok");
+    await refreshAll();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function loadParticipantsTable() {
+  const participantList = await contract.getParticipantList();
+
+  if (participantList.length === 0) {
+    document.getElementById("participantsTable").innerHTML = "No participants registered.";
+    return;
+  }
+
+  let html = "<table><tr><th>Name</th><th>Address</th><th>Total Weighted</th><th>Judges Count</th><th>Average</th></tr>";
+
+  for (const addr of participantList) {
+    const p = await contract.participants(addr);
+    const scoreData = await contract.getParticipantScore(addr);
+    const totalWeighted = Number(scoreData[0]);
+    const judgesCount = Number(scoreData[1]);
+    const average = judgesCount > 0 ? (totalWeighted / judgesCount).toFixed(2) : "0.00";
+
+    html += `
+      <tr>
+        <td>${p.name}</td>
+        <td class="mono">${addr}</td>
+        <td>${totalWeighted}</td>
+        <td>${judgesCount}</td>
+        <td>${average}</td>
+      </tr>
+    `;
+  }
+
+  html += "</table>";
+  document.getElementById("participantsTable").innerHTML = html;
+}
+
+async function loadJudgesTable() {
+  const judgeList = await contract.getJudgeList();
+
+  if (judgeList.length === 0) {
+    document.getElementById("judgesTable").innerHTML = "No judges registered.";
+    return;
+  }
+
+  let html = "<table><tr><th>Name</th><th>Address</th><th>Submitted</th><th>Total Assigned</th><th>Assigned Participants</th></tr>";
+
+  for (const addr of judgeList) {
+    const j = await contract.judges(addr);
+    const progress = await contract.getJudgeProgress(addr);
+    const assigned = await contract.getAssignedParticipants(addr);
+
+    html += `
+      <tr>
+        <td>${j.name}</td>
+        <td class="mono">${addr}</td>
+        <td>${Number(progress[0])}</td>
+        <td>${Number(progress[1])}</td>
+        <td class="mono">${assigned.length ? assigned.join("<br>") : "None"}</td>
+      </tr>
+    `;
+  }
+
+  html += "</table>";
+  document.getElementById("judgesTable").innerHTML = html;
+}
+
+async function loadLeaderboard() {
+  try {
+    requireConnectedContract();
+    const participantList = await contract.getParticipantList();
+
+    if (participantList.length === 0) {
+      document.getElementById("leaderboardTable").innerHTML = "No participants registered.";
+      return;
+    }
+
+    const rows = [];
+
+    for (const addr of participantList) {
+      const p = await contract.participants(addr);
+      const scoreData = await contract.getParticipantScore(addr);
+      const totalWeighted = Number(scoreData[0]);
+      const judgesCount = Number(scoreData[1]);
+      const average = judgesCount > 0 ? totalWeighted / judgesCount : 0;
+
+      rows.push({
+        name: p.name,
+        address: addr,
+        totalWeighted,
+        judgesCount,
+        average
+      });
+    }
+
+    rows.sort((a, b) => b.average - a.average);
+
+    let html = "<table><tr><th>Rank</th><th>Name</th><th>Address</th><th>Total Weighted</th><th>Judges Count</th><th>Average</th></tr>";
+
+    rows.forEach((row, index) => {
+      html += `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${row.name}</td>
+          <td class="mono">${row.address}</td>
+          <td>${row.totalWeighted}</td>
+          <td>${row.judgesCount}</td>
+          <td>${row.average.toFixed(2)}</td>
+        </tr>
+      `;
+    });
+
+    html += "</table>";
+    document.getElementById("leaderboardTable").innerHTML = html;
+    setStatus("Leaderboard loaded.", "ok");
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function lookupScore() {
+  try {
+    requireConnectedContract();
+
+    const judgeAddr = requireValidAddress(document.getElementById("lookupJudge").value, "Judge address");
+    const participantAddr = requireValidAddress(document.getElementById("lookupParticipant").value, "Participant address");
+
+    const result = await contract.getScore(judgeAddr, participantAddr);
+
+    const ps = Number(result[0]);
+    const cq = Number(result[1]);
+    const eff = Number(result[2]);
+    const submitted = result[3];
+
+    document.getElementById("scoreLookupResult").innerHTML = `
+      <b>Problem Solving:</b> ${ps}<br>
+      <b>Code Quality:</b> ${cq}<br>
+      <b>Efficiency:</b> ${eff}<br>
+      <b>Submitted:</b> ${submitted ? "Yes" : "No"}
+    `;
+
+    setStatus("Score lookup successful.", "ok");
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function loadData() {
+  try {
+    requireConnectedContract();
+    await loadParticipantsTable();
+    await loadJudgesTable();
+    await loadLeaderboard();
+    await refreshContractMeta();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+async function refreshAll() {
+  try {
+    if (!signer) return;
+    currentWallet = await signer.getAddress();
+    document.getElementById("wallet").textContent = currentWallet;
+    document.getElementById("role").textContent = getRole();
+    await loadData();
+  } catch (e) {
+    setStatus(getErrorMessage(e), "err");
+  }
+}
+
+if (window.ethereum) {
+  window.ethereum.on("accountsChanged", async function(accounts) {
+    try {
+      if (!accounts || accounts.length === 0) {
+        signer = null;
+        contract = null;
+        currentWallet = "";
+        document.getElementById("wallet").textContent = "Not connected";
+        document.getElementById("role").textContent = "-";
+        setStatus("Wallet disconnected.", "err");
+        return;
+      }
+
+      provider = new ethers.providers.Web3Provider(window.ethereum);
+      signer = provider.getSigner();
+      currentWallet = accounts[0];
+      document.getElementById("wallet").textContent = currentWallet;
+      document.getElementById("role").textContent = getRole();
+
+      const contractAddr = document.getElementById("contractAddress").value.trim();
+      if (contractAddr && ethers.utils.isAddress(contractAddr)) {
+        contract = new ethers.Contract(contractAddr, ABI, signer);
+      }
+
+      setStatus("Account changed to: " + currentWallet, "ok");
+      await refreshAll();
+    } catch (e) {
+      setStatus(getErrorMessage(e), "err");
+    }
+  });
+
+  window.ethereum.on("chainChanged", function() {
+    window.location.reload();
+  });
+}
+</script>
+
+</body>
+</html>
